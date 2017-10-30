@@ -1,54 +1,48 @@
 <?php
+	use nl\naturalis\bioportal\Client as Client;
+	use nl\naturalis\bioportal\QuerySpec as QuerySpec;
+	use nl\naturalis\bioportal\Condition as Condition;
+	
 	class NbaSitemap
 	{
-		private $baseUrl = 'http://api.biodiversitydata.nl/v0/';
-		private $portalUrl = 'http://bioportal.naturalis.nl/nba/result?nba_request=';
+		/* Config */
+		// Full path to output directory
+	    private $outputDir = '/Users/ruud/Documents/MAMP/htdocs/nba_sitemap/sitemap/';
+		// Full path to output directory
+	    private $logPath = '/tmp/bioportal-sitemap.log';
+	    // Full base path to BioPortal client directory (so not to CLient.php itself!)
+	    private $clientDir = '/Users/ruud/Documents/MAMP/htdocs/bp_client/';
+	    
+	    /* These settings should be quite stable; no setters available! */
+	    // Base url to NBA
+		private $nbaUrl = 'http://api.biodiversitydata.nl/v2/';
+		// NBA timeout
+		private $nbaTimeout = 30;
+		// Base url to BioPortal specimen detail page
+		private $bioportalUrl = 'http://bioportal.naturalis.nl/specimen/';
 				
-		private $query;
-		private $curlUrl;
-		private $curlData;
-		private $timeout = 5;
+		/* Application */
+	    private $client;
+	    private $nbaMaxResults;
 		
-		private $sourceSystems = array(
-			'Naturalis - Nederlands Soortenregister',
-			//'Naturalis - Botany catalogues'
-		);
-		
-		private $services = array (
-			'taxon' => 'taxon/search/',
-			'specimen' => 'specimen/name-search/',
-			'media' => 'multimedia/search'
-		);
-	
-		private $service;
-		private $sourceSystem;
-
-		private $taxonMaxResults = 50;
-		private	$taxonTotal = 0;
-		private	$taxonIterator = 0;
-		private $fileIterator = 1;
-		private $linkIterator = 0;
-		private $taxa;
-		
-		private $indicator;
-		private $indicatorMarkersPerLine = 75;
-		private $indicatorIterationsPerMarker = 25;
-		private $indicatorBreakLine = "\n";
-
 	    private $xmlWriter;
-	    private $outputDir = 'sitemap/';
 	    private $fileName;
-	    private $linksPerSitemap = 10000;
-	    private $files;
-	
+
+	    private $collection;
+	    private $genusOrMonomial;
+	    private $specificEpithet;
+	    private $query;
+	    
+	    private $batchSize = 50;
+		private	$total = 0;
+	    
 
 		public function __construct ()
 		{
             $this->bootstrap();
-			$this->sourceSystems = (object) $this->sourceSystems;
-			$this->services = (object) $this->services;
             $this->initXmlWriter();
-            $this->initIndicator();
+            $this->nbaMaxResults = $this->getNbaMaxResults();
+            set_time_limit(0);
 		}
 	
         public function __destruct ()
@@ -57,252 +51,294 @@
                 unset($this->xmlWriter);
             }
         }
-
-		public function setBaseUrl ($url)
-		{
-			$this->baseUrl = $url;
-		}
-		
-		public function setPortalUrl ($url)
-		{
-			$this->portalUrl = $url;
-		}
-
-		public function setCurlTimeout ($timer)
-		{
-			$this->timeout = $timer;
-		}
-		
+        
+        public function setOutputDir ($dir) 
+        {
+        	$this->outputDir = $dir;
+        }
+        
+	    public function setLogPath ($path) 
+        {
+        	$this->logPath = $path;
+        }
+        
+		public function setBioportalClientDir ($dir) 
+        {
+        	$this->clientDir = $dir;
+        }
+ 
 		public function run ()
 		{
-			foreach ($this->sourceSystems as $this->sourceSystem) {
-				$this->setTaxonTotal();
-				for ($i = 0; $i <= $this->taxonTotal; $i += $this->taxonMaxResults) {
-					$this->setTaxonIterator($i);
-					$this->writeTaxa();
+			// First write data for highlights
+			// later!
+			
+			$collections = (array) $this->getCollections();
+			foreach ($collections as $this->collection => $nrSpecimens) {
+				$this->resetGenusAndSpecies();
+				// Check if number of specimens in collection exceeds NBA query window;
+				// if so, create queries for genera A-Z
+				if ($nrSpecimens >= $this->nbaMaxResults) {
+					// Loop over genus A-Z
+					foreach (range('a', 'z') as $this->genusOrMonomial) {
+						// Oh my, still too many records; continue with species A-Z
+						if ($this->getNrSpecimens() >= $this->nbaMaxResults) {
+							foreach (range('a', 'z') as $this->specificEpithet) {
+								if (!empty($this->getNrSpecimens())) {
+									$this->writeFile();
+								}
+							}
+						} else {
+							//$this->queries[$collection][$genusOrMonomial] = $nrGenera;
+							$this->writeFile();
+						}
+					}
+				} else {
+					$this->writeFile();
 				}
 			}
+			return $this->queries;
 		}
 		
-		private function setService ($service)
+		public function getCollections () 
 		{
-			$this->service = $service;
+			return json_decode($this->client()->getDistinctValues('collectionType'));
 		}
 		
-		private function setQuery ($query)
+		public function getNrSpecimens () 
 		{
-			$this->query = $query;
+			return $this->client()->setQuerySpec($this->setQuery())->count();
 		}
 		
-		private function setTaxonIterator ($i)
+		private function getCollectionQuery () 
 		{
-			$this->taxonIterator = $i;
+			return $this->setQuery(true);
+		}
+		
+		private function setCondition () 
+		{
+			$condition = new Condition('collectionType', 'EQUALS_IC', $this->collection);
+			if ($this->genusOrMonomial) {
+				$condition->setAnd('identifications.scientificName.genusOrMonomial', 
+					'STARTS_WITH_IC', $this->genusOrMonomial);
+			}
+			if ($this->specificEpithet) {
+				$condition->setAnd('identifications.scientificName.specificEpithet', 
+					'STARTS_WITH_IC', $this->specificEpithet);
+			}
+			return $condition;
+		}
+		
+		private function setQuery () 
+		{
+			$query = new QuerySpec;
+			$query
+				->addCondition($this->setCondition())
+				->setConstantScore();
+			return $query;
+		}
+		
+		private function resetGenusAndSpecies ()
+		{
+			$this->genusOrMonomial = $this->specificEpithet = false;
 		}
 		
 		private function writeFile ()
 		{
-        	$this->xmlWriter->startDocument('1.0', 'UTF-8');
+			// Delete file if it has been created previously
+			if (file_exists($this->getXmlFilePath())) {
+				unlink($this->getXmlFilePath());
+			}
+			// Get total number of specimens for this file
+			$this->query = $this->getCollectionQuery()->setSize(1);
+        	$tmp = json_decode($this->client()->setQuerySpec($this->query)->query());
+         	$this->total = $tmp->totalSize;
+			
+         	// Start timer for log
+         	$start = microtime(true);
+         	
+         	// Let's go!
+			$this->xmlWriter->startDocument('1.0', 'UTF-8');
         	$this->xmlWriter->startElement('urlset');
         	$this->xmlWriter->writeAttribute('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
         	$this->xmlWriter->writeAttribute('xmlns:image', 'http://www.google.com/schemas/sitemap-image/1.1');
-
-        	foreach ($this->taxa as $i => $taxon) {
-        		$this->xmlWriter->startElement('url');
-        		$this->xmlWriter->writeElement('loc', $this->portalUrl . $this->setNbaRequest($taxon));
-                if (!empty($taxon->media)) {
-                    foreach ($taxon->media as $media) {
-                        $this->xmlWriter->startElement('image:image');
-                        $this->xmlWriter->writeElement('image:loc', $media->loc);
-                        if (!empty($media->caption)) {
-                            $this->xmlWriter->writeElement('image:caption', $media->caption);
-                        }
-                        $this->xmlWriter->endElement();
-                    }
-        		}
-        	    $this->xmlWriter->endElement();
-        	}
+        	$this->flushXml();
+         	
+         	for ($n = 0; $n < $this->total; $n =+ $this->batchSize) {
+				// Modify query for current loop
+         		$this->query->setFrom($n)->setSize($this->batchSize);
+         		$result = json_decode($this->client()->setQuerySpec($this->query)->query());
+         		
+         		// Write line for each specimen
+         		foreach ($result->resultSet as $specimen) {
+	        		$this->xmlWriter->startElement('url');
+	        		$this->xmlWriter->writeElement('loc', $this->bioportalUrl . $specimen->item->unitID);
+	                if (isset($specimen->item->associatedMultiMediaUris)) {
+	                    foreach ($specimen->item->associatedMultiMediaUris as $media) {
+	                        $this->xmlWriter->startElement('image:image');
+	                        $this->xmlWriter->writeElement('image:loc', $media->accessUri);
+	                        $this->xmlWriter->endElement();
+	                    }
+	        		}
+	        	    $this->xmlWriter->endElement();
+	        	    $this->flushXml();
+	        	}
+         	}
 
         	$this->xmlWriter->endElement();
-        	file_put_contents(
-        	   $this->outputDir . 'sitemap_' . $this->fileIterator . '.xml',
-        	   $this->xmlWriter->flush(true),
-        	   FILE_APPEND
-        	);
-		}
+        	$this->flushXml();
+        	
+        	// Write progress to log
+        	$this->writeLog(date("Y-m-d H:i:s") . ': ' . $this->getXmlFilePath() . ' created in ' .
+        		round(microtime(true) - $start, 1) . "s\n");
+ 		}
 		
-		private function setNbaRequest ($taxon)
+		private function flushXml () 
 		{
-			return rawurlencode($this->baseUrl . 'taxon/get-taxon?genus=' . $taxon->genus . '&specificEpithet=' . 
-				$taxon->specificEpithet . (!empty($taxon->infraspecificEpithet) ? 
-				'&infraspecificEpithet=' . $taxon->infraspecificEpithet : ''));
-		}
-		
-		private function setTaxonTotal ()
-		{
-			$this->setService($this->services->taxon);
-			$this->setQuery('sourceSystem=' . urlencode($this->sourceSystem));
-			$this->setCurlUrl();
-			$this->queryNba();
-			if (isset($this->curlData->totalSize)) {
-				$this->taxonTotal = $this->curlData->totalSize;
-				$this->indicator->init($this->taxonTotal);
+			try {
+				file_put_contents($this->getXmlFilePath(), $this->xmlWriter->flush(true), FILE_APPEND);
+			} catch (Exception $e) {
+				die($e->getMessage());
 			}
 		}
 		
-		private function writeTaxa ()
-		{
-			$this->setService($this->services->taxon);
-			$this->setQuery('sourceSystem=' . urlencode($this->sourceSystem) .
-				'&_maxResults=' . $this->taxonMaxResults . '&_offset=' . $this->taxonIterator);
-			$this->setCurlUrl();
-			$this->queryNba();
-			
-			$taxonResult = $this->curlData;
-			
-			if (isset($taxonResult->resultGroups) && count($taxonResult->resultGroups) > 0) {
-				foreach ($taxonResult->resultGroups as $d) {
-					$this->indicator->iterate();
-					$data = $d->searchResults[0]->result;
-				
-					$taxon = new stdClass();
-					$taxon->genus = $data->acceptedName->genusOrMonomial;
-					$taxon->specificEpithet = $data->acceptedName->specificEpithet;
-					$taxon->infraspecificEpithet = $data->acceptedName->infraspecificEpithet;
-					$taxon->media = array();
-						
-					/* Three checks to qualify for inclusion in sitemap:
-					1. Description is not empty
-					2. Has specimens
-					3. Has media */
-					if (!empty($data->descriptions) || 
-						$this->taxonHasSpecimens($taxon) || 
-						$this->taxonHasMedia($taxon)) {
-						$this->taxa[] = $taxon;
-						$this->linkIterator++;
-
-						// Buffer until we have a complete document to print
-						if ($this->linkIterator % $this->linksPerSitemap == 0) {
-							$this->writeFile();
-							$this->resetTaxa();
-						}
-					}
-				}
+		private function writeLog ($message) {
+			try {
+				file_put_contents($this->logPath, $message,  FILE_APPEND);
+			} catch (Exception $e) {
+				die($e->getMessage());
 			}
 		}
 		
-		private function taxonHasSpecimens ($taxon)
+		private function getXmlFilePath () 
 		{
-			$this->setService($this->services->specimen);
-			$this->setQuery('genusOrMonomial=' . $taxon->genus . '&specificEpithet=' . 
-				$taxon->specificEpithet . '&infraspecificEpithet=' . 
-				$taxon->infraspecificEpithet . '&_maxResults=1');
-			$this->setCurlUrl();
-			$this->queryNba();
-			if (isset($this->curlData->totalSize)) {
-				return $this->curlData->totalSize > 0;
-			} 
-			return false;
-		}
-		
-		private function taxonHasMedia (&$taxon)
-		{
-			$this->setService($this->services->media);
-			$this->setQuery('genusOrMonomial=' . $taxon->genus . '&specificEpithet=' . 
-				$taxon->specificEpithet . '&infraspecificEpithet=' . 
-				$taxon->infraspecificEpithet . '&_maxResults=10');
-			$this->setCurlUrl();
-			$this->queryNba();
-			
-			if (isset($this->curlData->searchResults) && count($this->curlData->searchResults) > 0) {
-				foreach ($this->curlData->searchResults as $i => $d) {
-					$data = $d->result->identifications[0]->scientificName;
-				
-					// Service in v0 is broken, is IF rather than AND search. Check "manually"
-					if ($taxon->genus == $data->genusOrMonomial &&
-						$taxon->specificEpithet == strtolower($data->specificEpithet) &&
-						$taxon->infraspecificEpithet == strtolower($data->infraspecificEpithet) &&
-						$i <= 5) {
-						$media = new stdClass();
-						$media->loc = $d->result->serviceAccessPoints->MEDIUM_QUALITY->accessUri;
-						$media->caption = $d->result->caption;
-						$taxon->media[] = $media;	
-					// Return upon first incorrect match, assuming that results are sorted by relevance
-					} else {
-						return !empty($taxon->media) ? $taxon : false;
-					}
-				}
-				return !empty($taxon->media) ? $taxon : false;
+			$path = $this->outputDir . strtolower($this->collection);
+			if (!empty($this->genusOrMonomial)) {
+				$path .= '_' . $this->genusOrMonomial;
 			}
-			return false;
-		}
-		
-		private function queryNba () 
-		{
-			$curl = curl_init();
-			curl_setopt($curl, CURLOPT_URL, $this->curlUrl);
-			curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-			curl_setopt($curl, CURLOPT_HEADER, false);
-			if ($this->timeout) {
-				curl_setopt($curl, CURLOPT_TIMEOUT, $this->timeout);
+			if (!empty($this->specificEpithet)) {
+				$path .= '_' . $this->specificEpithet;
 			}
-			$this->curlData = json_decode(curl_exec($curl));
-			curl_close($curl);
+			return $path . '.xml';
 		}
 		
-		private function setCurlUrl ()
-		{
-			$this->curlUrl = $this->baseUrl . $this->service . '?' . $this->query;
-		}
-		
-		private function printData ()
-		{
-			echo '<pre>'; 
-			print_r($this->curlData); 
-			die('</pre>');
-		}
-
 		private function initXmlWriter ()
 		{
-            $this->xmlWriter = new XMLWriter();
+            $this->xmlWriter = new \XMLWriter();
             $this->xmlWriter->openMemory();
             $this->xmlWriter->setIndent(true);
             $this->xmlWriter->setIndentString("   ");
 		}
 		
-		private function initIndicator ()
+		private function client ()
 		{
-			$this->indicator = new Indicator();
-			$this->indicator->setMarkersPerLine($this->indicatorMarkersPerLine);
-			$this->indicator->setIterationsPerMarker($this->indicatorIterationsPerMarker);
-			$this->indicator->setBreakLine($this->indicatorBreakLine);
+			$this->client = new Client;
+			return 
+				$this->client->setNbaUrl($this->nbaUrl)->setNbaTimeout($this->nbaTimeout)->specimen();
+		}
+		
+		private function getNbaMaxResults ()
+		{
+			return (int) $this->client()->getIndexMaxResultWindow();
 		}
 
 		private function bootstrap ()
 		{
-            // Need to track progress
-            if (file_exists('Indicator.php')) {
-				require_once 'Indicator.php';
+            // Load PHP client
+            $clientPath = $this->clientDir . '/lib/nl/naturalis/bioportal/Loader.php';
+		    if (file_exists($clientPath)) {
+				require_once $clientPath;
             } else {
-            	die("Indicator class is missing!\n");
+            	throw new Exception("PHP client path $clientPath is incorrect!\n");
             }
             // Test if output directory exists; if not try to create it
             if (!file_exists($this->outputDir)) {
                 if (!mkdir($this->outputDir)) {
-                    die('Cannot create directory ' . $this->outputDir . "\n");
+                    throw new Exception("Cannot create directory $this->outputDir\n");
                 }
             }
 		    // Test output directory
 		    if (!is_writable($this->outputDir)) {
-                die($this->outputDir . " is not writable!\n");
+                throw new Exception($this->outputDir . " is not writable!\n");
+		    }
+		    // Test log
+			if (!file_exists($this->logPath)) {
+				try {
+					$fp = @fopen($this->logPath, 'a');
+					if ($fp) {
+						fclose($fp);
+					}
+				} catch (Exception $e) {
+				    die('Cannot write to log path ' . $this->logPath);
+				}
 		    }
 		}
-
-		private function resetTaxa ()
+		
+		private function resetIterator ()
 		{
-        	$this->fileIterator++;
-        	$this->linkIterator = 0;
-        	$this->taxa = array();
+        	$this->iterator = 0;
 		}
+		
+		// Near straight clone of BP method; directly return preferred name
+		private function _getSpecimenName ($identifications = []) {
+		    foreach ($identifications as $identification) {
+		    	$name = $this->_getScientificName($identification);
+		    	if (!empty($name)) {
+					$output[] = [
+						'name' => $name,
+						//'url' => _getTaxonUrl($identification),
+					    'preferred' => $identification->preferred ? 1 : 0
+					];
+		    	}
+			}
+			if (isset($output)) {
+		    	usort($output, function($a, $b) {
+		            return $b['preferred'] - $a['preferred'];
+		        });
+			}
+			return isset($output) ? $output[0]['name'] : [];
+		}
+		
+		// Clone of BP method
+		private function _getScientificName ($object) {
+			// Can be used to generate a full italicized name (default) or 
+			// a simple non-formatted name without authorship
+			$elements = $this->_scientificNameElementsInItalics();
+			// Name can be stored in either acceptedName (taxon) or 
+			// scientificName (specimen); try both
+			foreach (['acceptedName', 'scientificName'] as $path) {
+				foreach ($elements as $i => $element) {
+					$name[$i] = isset($object->{$path}->{$element}) && 
+						!empty(trim($object->{$path}->{$element})) ?
+						trim($object->{$path}->{$element}) : null;
+					// Subgenus between brackets
+					if ($element == 'subgenus' && !empty($name[$i]) && $name[$i][0] != '(' && 
+						substr($name[$i], -1) != ')') {
+						$name[$i] = '(' . $name[$i] . ')';
+					}
+				}
+				// Some specimens don't have a properly formatted name;
+				// revert to fullScientificName
+				if (isset($object->{$path}) && empty($name[0])) {
+					$name[0] = $object->{$path}->fullScientificName;
+					unset($name[1], $name[2], $name[3]);
+				}
+				if (!empty(array_filter($name))) {
+					return implode(' ', array_filter($name));
+				}
+			}
+			return null;
+		}
+		
+		// Clone of BP method
+		private function _scientificNameElementsInItalics () { 
+			return [
+				'genusOrMonomial',
+				'subgenus',
+				'specificEpithet',
+				'infraspecificEpithet',
+			];		
+		}
+			
 	}
 	
 
