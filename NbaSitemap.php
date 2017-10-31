@@ -12,6 +12,8 @@
 	    private $logPath = '/tmp/bioportal-sitemap.log';
 	    // Full base path to BioPortal client directory (so not to CLient.php itself!)
 	    private $clientDir = '/Users/ruud/Documents/MAMP/htdocs/bp_client/';
+	    // Gzip sitemaps?
+	    private $gzip = true;
 	    
 	    /* These settings should be quite stable; no setters available! */
 	    // Base url to NBA
@@ -19,7 +21,7 @@
 		// NBA timeout
 		private $nbaTimeout = 30;
 		// Base url to BioPortal specimen detail page
-		private $bioportalUrl = 'http://bioportal.naturalis.nl/specimen/';
+		private $bioportalUrl = 'http://bioportal.naturalis.nl/';
 				
 		/* Application */
 	    private $client;
@@ -69,7 +71,9 @@
             $this->bootstrap();
             $this->initXmlWriter();
             $this->setNbaMaxResults();
-			
+            
+            $this->writeSitemapIndex(); die();
+            
 			// Clean up the existing sitemaps first
 			$this->deleteAllSitemaps();
 
@@ -102,6 +106,10 @@
 				} else {
 					$this->writeFile();
 				}
+			}
+			
+			if ($this->gzip) {
+				$this->gzipSitemaps();
 			}
 			
 			// Write sitemap index that will be submitted to Google etc
@@ -191,7 +199,8 @@
          		// Write line for each specimen
          		foreach ($result->resultSet as $specimen) {
 	        		$this->xmlWriter->startElement('url');
-	        		$this->xmlWriter->writeElement('loc', $this->bioportalUrl . rawurlencode($specimen->item->unitID));
+	        		$this->xmlWriter->writeElement('loc', $this->bioportalUrl . 'specimen/' .
+	        			rawurlencode($specimen->item->unitID));
 	                if (isset($specimen->item->associatedMultiMediaUris)) {
 	                    foreach ($specimen->item->associatedMultiMediaUris as $media) {
 	                        $this->xmlWriter->startElement('image:image');
@@ -246,8 +255,9 @@
 				FilesystemIterator::SKIP_DOTS);
 			$recursiveIterator = new \RecursiveIteratorIterator($directoryIterator, 
 				RecursiveIteratorIterator::CHILD_FIRST);
+			$extension = $this->gzip ? 'gz' : 'xml';
 			foreach ($recursiveIterator as $file) {
-			    if ($file->isFile() && $file->getExtension() == 'xml') {
+			    if ($file->isFile() && $file->getExtension() == $extension) {
 			    	$files[] = [
 			    		'loc' => $file->getFilename(),
 			    		'lastmod' => $file->getMTime()
@@ -255,6 +265,19 @@
 			    }
 			}
  			return isset($files) ? $files : [];
+ 		}
+ 		
+		private function gzipSitemapFiles ()
+ 		{
+ 			$directoryIterator = new \RecursiveDirectoryIterator($this->outputDir, 
+				FilesystemIterator::SKIP_DOTS);
+			$recursiveIterator = new \RecursiveIteratorIterator($directoryIterator, 
+				RecursiveIteratorIterator::CHILD_FIRST);
+			foreach ($recursiveIterator as $file) {
+			    if ($file->isFile() && $file->getExtension() == 'xml') {
+					exec('gzip -f "' . $file->getPath() . '/' . $file->getFilename() . '"');
+			    }
+			}
  		}
 		
 		private function flushXml ($file = false) 
