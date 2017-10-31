@@ -12,8 +12,6 @@
 	    private $logPath = '/tmp/bioportal-sitemap.log';
 	    // Full base path to BioPortal client directory (so not to CLient.php itself!)
 	    private $clientDir = '/Users/ruud/Documents/MAMP/htdocs/bp_client/';
-	    // Gzip sitemaps?
-	    private $gzip = true;
 	    
 	    /* These settings should be quite stable; no setters available! */
 	    // Base url to NBA
@@ -104,10 +102,6 @@
 				} else {
 					$this->writeFile();
 				}
-			}
-			
-			if ($this->gzip) {
-				$this->gzipSitemaps();
 			}
 			
 			// Write sitemap index that will be submitted to Google etc
@@ -216,12 +210,6 @@
         	$this->xmlWriter->endElement();
         	$this->flushXml();
         	
-        	// Zip if set
-        	if ($this->gzip) {
-        		chown($this->getXmlFilePath(), 'www-data');
-        		exec('gzip -f "' . $this->getXmlFilePath() . '"');
-        	}
-        	
         	// Write progress to log
         	$this->writeLog(date("Y-m-d H:i:s") . ': ' . $this->getXmlFilePath() . ' created in ' .
         		round(microtime(true) - $start, 1) . "s\n");
@@ -259,9 +247,8 @@
 				FilesystemIterator::SKIP_DOTS);
 			$recursiveIterator = new \RecursiveIteratorIterator($directoryIterator, 
 				RecursiveIteratorIterator::CHILD_FIRST);
-			$extension = $this->gzip ? 'gz' : 'xml';
 			foreach ($recursiveIterator as $file) {
-			    if ($file->isFile() && $file->getExtension() == $extension) {
+			    if ($file->isFile() && $file->getExtension() == 'xml') {
 			    	$files[] = [
 			    		'loc' => $file->getFilename(),
 			    		'lastmod' => $file->getMTime()
