@@ -216,6 +216,12 @@
         	$this->xmlWriter->endElement();
         	$this->flushXml();
         	
+        	// Zip if set
+        	if ($this->gzip) {
+        		chown($this->getXmlFilePath(), 'www-data');
+        		exec('gzip -f "' . $this->getXmlFilePath() . '"');
+        	}
+        	
         	// Write progress to log
         	$this->writeLog(date("Y-m-d H:i:s") . ': ' . $this->getXmlFilePath() . ' created in ' .
         		round(microtime(true) - $start, 1) . "s\n");
@@ -265,19 +271,6 @@
  			return isset($files) ? $files : [];
  		}
  		
-		private function gzipSitemapFiles ()
- 		{
- 			$directoryIterator = new \RecursiveDirectoryIterator($this->outputDir, 
-				FilesystemIterator::SKIP_DOTS);
-			$recursiveIterator = new \RecursiveIteratorIterator($directoryIterator, 
-				RecursiveIteratorIterator::CHILD_FIRST);
-			foreach ($recursiveIterator as $file) {
-			    if ($file->isFile() && $file->getExtension() == 'xml') {
-					exec('gzip -f "' . $file->getPath() . '/' . $file->getFilename() . '"');
-			    }
-			}
- 		}
-		
 		private function flushXml ($file = false) 
 		{
 			$file = !$file ? $this->getXmlFilePath() : $file;
