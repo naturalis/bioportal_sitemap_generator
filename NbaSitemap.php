@@ -69,9 +69,17 @@
  
 		public function run ()
 		{
-			// First write data for highlights
-			// later!
+			$this->writeSitemapIndex(); die();
 			
+			
+			// Clean up the existing sitemaps first
+			$this->deleteAllSitemaps();
+
+			// Create start marker in log file
+			$this->writeLog("\n================================================\n" . 
+				"Sitemap creation started at " . date("Y-m-d H:i:s") . "\n");
+			
+			// Write sitemap files for all collections
 			$collections = (array) $this->getCollections();
 			foreach ($collections as $this->collection => $nrSpecimens) {
 				$this->resetGenusAndSpecies();
@@ -91,12 +99,19 @@
 							//$this->queries[$collection][$genusOrMonomial] = $nrGenera;
 							$this->writeFile();
 						}
+						$this->resetSpecies();
 					}
 				} else {
 					$this->writeFile();
 				}
 			}
-			return $this->queries;
+			
+			// Write sitemap index that will be submitted to Google etc
+			$this->writeSitemapIndex();
+			
+			// Create end marker in log file
+			$this->writeLog("Sitemap creation ended at " . date("Y-m-d H:i:s") . "\n" .
+				"================================================\n");
 		}
 		
 		public function getCollections () 
@@ -142,6 +157,11 @@
 			$this->genusOrMonomial = $this->specificEpithet = false;
 		}
 		
+		private function resetSpecies ()
+		{
+			$this->specificEpithet = false;
+		}
+		
 		private function writeFile ()
 		{
 			// Delete file if it has been created previously
@@ -151,8 +171,9 @@
 			// Get total number of specimens for this file
 			$this->query = $this->getCollectionQuery()->setSize(1);
         	$tmp = json_decode($this->client()->setQuerySpec($this->query)->query());
-         	$this->total = $tmp->totalSize;
-			
+        	// Max cannot be higher than NBA max results
+         	$this->total = min($tmp->totalSize, $this->nbaMaxResults);
+         	
          	// Start timer for log
          	$start = microtime(true);
          	
@@ -163,7 +184,8 @@
         	$this->xmlWriter->writeAttribute('xmlns:image', 'http://www.google.com/schemas/sitemap-image/1.1');
         	$this->flushXml();
          	
-         	for ($n = 0; $n < $this->total; $n =+ $this->batchSize) {
+        	// Loop over result in batches
+         	for ($n = 0; $n < $this->total; $n += $this->batchSize) {
 				// Modify query for current loop
          		$this->query->setFrom($n)->setSize($this->batchSize);
          		$result = json_decode($this->client()->setQuerySpec($this->query)->query());
@@ -171,11 +193,13 @@
          		// Write line for each specimen
          		foreach ($result->resultSet as $specimen) {
 	        		$this->xmlWriter->startElement('url');
-	        		$this->xmlWriter->writeElement('loc', $this->bioportalUrl . $specimen->item->unitID);
+	        		$this->xmlWriter->writeElement('loc', $this->bioportalUrl . rawurlencode($specimen->item->unitID));
 	                if (isset($specimen->item->associatedMultiMediaUris)) {
 	                    foreach ($specimen->item->associatedMultiMediaUris as $media) {
 	                        $this->xmlWriter->startElement('image:image');
 	                        $this->xmlWriter->writeElement('image:loc', $media->accessUri);
+                            $this->xmlWriter->writeElement('image:caption', 
+                            	'Image of specimen ' . $specimen->item->unitID . ' from the Naturalis collection');
 	                        $this->xmlWriter->endElement();
 	                    }
 	        		}
@@ -191,13 +215,68 @@
         	$this->writeLog(date("Y-m-d H:i:s") . ': ' . $this->getXmlFilePath() . ' created in ' .
         		round(microtime(true) - $start, 1) . "s\n");
  		}
+ 		
+ 		private function writeSitemapIndex () 
+ 		{
+ 			$filePath = $this->outputDir . 'sitemap-index.xml';
+ 			
+ 			// Delete file if it has been created previously
+			if (file_exists($filePath)) {
+				unlink($filePath);
+			}
+			
+ 			$this->xmlWriter->startDocument('1.0', 'UTF-8');
+        	$this->xmlWriter->startElement('sitemapindex');
+        	$this->xmlWriter->writeAttribute('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+			$this->flushXml($filePath);
+			
+			foreach ($this->getSitemapFiles() as $file) {
+				$this->xmlWriter->startElement('sitemap');
+				$this->xmlWriter->writeElement('loc', $this->bioportalUrl . 'sitemap/' . $file['loc']);
+	 			$this->xmlWriter->writeElement('lastmod',  date('c', $file['lastmod']));
+	        	$this->xmlWriter->endElement();
+	        	$this->flushXml($filePath);
+	 		}
+
+        	$this->xmlWriter->endElement();
+        	$this->flushXml($filePath);
+ 		}
+ 		
+ 		private function getSitemapFiles ()
+ 		{
+ 			$directoryIterator = new \RecursiveDirectoryIterator($this->outputDir, 
+				FilesystemIterator::SKIP_DOTS);
+			$recursiveIterator = new \RecursiveIteratorIterator($directoryIterator, 
+				RecursiveIteratorIterator::CHILD_FIRST);
+			foreach ($recursiveIterator as $file) {
+			    if ($file->isFile() && $file->getExtension() == 'xml') {
+			    	$files[] = [
+			    		'loc' => $file->getFilename(),
+			    		'lastmod' => $file->getMTime()
+			    	];
+			    }
+			}
+ 			return isset($files) ? $files : [];
+ 		}
 		
-		private function flushXml () 
+		private function flushXml ($file = false) 
 		{
+			$file = !$file ? $this->getXmlFilePath() : $file;
 			try {
-				file_put_contents($this->getXmlFilePath(), $this->xmlWriter->flush(true), FILE_APPEND);
+				file_put_contents($file, $this->xmlWriter->flush(true), FILE_APPEND);
 			} catch (Exception $e) {
 				die($e->getMessage());
+			}
+		}
+		
+		private function deleteAllSitemaps ()
+		{
+			$directoryIterator = new \RecursiveDirectoryIterator($this->outputDir, 
+				FilesystemIterator::SKIP_DOTS);
+			$recursiveIterator = new \RecursiveIteratorIterator($directoryIterator, 
+				RecursiveIteratorIterator::CHILD_FIRST);
+			foreach ($recursiveIterator as $file) {
+			    $file->isDir() ? rmdir($file) : unlink($file);
 			}
 		}
 		
