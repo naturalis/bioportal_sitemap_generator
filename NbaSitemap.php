@@ -39,9 +39,6 @@
 
 		public function __construct ()
 		{
-            $this->bootstrap();
-            $this->initXmlWriter();
-            $this->nbaMaxResults = $this->getNbaMaxResults();
             set_time_limit(0);
 		}
 	
@@ -69,8 +66,9 @@
  
 		public function run ()
 		{
-			$this->writeSitemapIndex(); die();
-			
+            $this->bootstrap();
+            $this->initXmlWriter();
+            $this->setNbaMaxResults();
 			
 			// Clean up the existing sitemaps first
 			$this->deleteAllSitemaps();
@@ -315,15 +313,15 @@
 				$this->client->setNbaUrl($this->nbaUrl)->setNbaTimeout($this->nbaTimeout)->specimen();
 		}
 		
-		private function getNbaMaxResults ()
+		private function setNbaMaxResults ()
 		{
-			return (int) $this->client()->getIndexMaxResultWindow();
+			$this->nbaMaxResults =  (int) $this->client()->getIndexMaxResultWindow();
 		}
 
 		private function bootstrap ()
 		{
             // Load PHP client
-            $clientPath = $this->clientDir . '/lib/nl/naturalis/bioportal/Loader.php';
+            $clientPath = $this->clientDir . 'lib/nl/naturalis/bioportal/Loader.php';
 		    if (file_exists($clientPath)) {
 				require_once $clientPath;
             } else {
