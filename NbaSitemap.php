@@ -72,8 +72,6 @@
             $this->initXmlWriter();
             $this->setNbaMaxResults();
             
-            $this->writeSitemapIndex(); die();
-            
 			// Clean up the existing sitemaps first
 			$this->deleteAllSitemaps();
 
