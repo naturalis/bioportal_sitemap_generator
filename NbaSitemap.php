@@ -289,7 +289,7 @@
 		
 		private function getXmlFilePath () 
 		{
-			$path = $this->outputDir . strtolower($this->collection);
+			$path = $this->outputDir . str_replace(' ', '_', strtolower($this->collection));
 			if (!empty($this->genusOrMonomial)) {
 				$path .= '_' . $this->genusOrMonomial;
 			}
