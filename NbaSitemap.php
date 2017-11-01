@@ -12,6 +12,9 @@
 	    private $logPath = '/tmp/bioportal-sitemap.log';
 	    // Full base path to BioPortal client directory (so not to CLient.php itself!)
 	    private $clientDir = '/Users/ruud/Documents/MAMP/htdocs/bp_client/';
+		// Path to sitemap directory 
+		// Complete url to index file is $bioportalUrl . $sitemapDirectory . 'sitemap-index.xml'
+		private $sitemapDirectory = 'sitemap/';
 	    
 	    /* These settings should be quite stable; no setters available! */
 	    // Base url to NBA
@@ -20,6 +23,7 @@
 		private $nbaTimeout = 30;
 		// Base url to BioPortal specimen detail page
 		private $bioportalUrl = 'http://bioportal.naturalis.nl/';
+		
 				
 		/* Application */
 	    private $client;
@@ -215,7 +219,7 @@
         		round(microtime(true) - $start, 1) . "s\n");
  		}
  		
- 		private function writeSitemapIndex () 
+ 		public function writeSitemapIndex () 
  		{
  			$filePath = $this->outputDir . 'sitemap-index.xml';
  			
@@ -231,7 +235,7 @@
 			
 			foreach ($this->getSitemapFiles() as $file) {
 				$this->xmlWriter->startElement('sitemap');
-				$this->xmlWriter->writeElement('loc', $this->bioportalUrl . 'sitemap/' . $file['loc']);
+				$this->xmlWriter->writeElement('loc', $this->bioportalUrl . $this->sitemapDirectory . $file['loc']);
 	 			$this->xmlWriter->writeElement('lastmod',  date('c', $file['lastmod']));
 	        	$this->xmlWriter->endElement();
 	        	$this->flushXml($filePath);
