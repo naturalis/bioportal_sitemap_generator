@@ -3,7 +3,7 @@
 	use nl\naturalis\bioportal\QuerySpec as QuerySpec;
 	use nl\naturalis\bioportal\Condition as Condition;
 	
-	class NbaSitemap
+	class BioportalSitemap
 	{
 		/* Config */
 		// Full path to output directory

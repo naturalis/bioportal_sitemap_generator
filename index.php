@@ -1,14 +1,14 @@
 <?php
-	require_once 'NbaSitemap.php';
+	require_once 'BioportalSitemap.php';
 	
-	$nba = new \NbaSitemap();
+	$bs = new \BioportalSitemap();
 	
 	// Server settings
-	$nba->setOutputDir('/opt/git/bioportal_sitemap_generator/sitemaps/');
-	$nba->setLogPath('/var/log/bioportal-sitemap.log');
-	$nba->setBioportalClientDir('/opt/git/bioportal-php-client/');
+	$bs->setOutputDir('/opt/git/bioportal_sitemap_generator/sitemap/');
+	$bs->setLogPath('/var/log/bioportal-sitemap.log');
+	$bs->setBioportalClientDir('/opt/git/bioportal-php-client/');
 	
-	$nba->run();
+	$bs->run();
 
 
 ?>
