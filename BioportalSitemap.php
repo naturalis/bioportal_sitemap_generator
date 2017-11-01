@@ -173,8 +173,8 @@
 			// Get total number of specimens for this file
 			$this->query = $this->getCollectionQuery()->setSize(1);
         	$tmp = json_decode($this->client()->setQuerySpec($this->query)->query());
-        	// Max cannot be higher than NBA max results
-         	$this->total = min($tmp->totalSize, $this->nbaMaxResults);
+        	// Max cannot be higher than NBA max results or 50000 (maximum number of links in sitemap)
+         	$this->total = min($tmp->totalSize, $this->nbaMaxResults, 50000);
          	
          	// Start timer for log
          	$start = microtime(true);
