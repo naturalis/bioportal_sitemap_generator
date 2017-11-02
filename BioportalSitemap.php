@@ -267,7 +267,7 @@
 			$file = !$file ? $this->getXmlFilePath() : $file;
 			try {
 				file_put_contents($file, $this->xmlWriter->flush(true), FILE_APPEND);
-			} catch (Exception $e) {
+			} catch (\Exception $e) {
 				die($e->getMessage());
 			}
 		}
@@ -286,7 +286,7 @@
 		private function writeLog ($message) {
 			try {
 				file_put_contents($this->logPath, $message,  FILE_APPEND);
-			} catch (Exception $e) {
+			} catch (\Exception $e) {
 				die($e->getMessage());
 			}
 		}
