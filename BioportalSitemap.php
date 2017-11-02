@@ -349,7 +349,7 @@
 					if ($fp) {
 						fclose($fp);
 					}
-				} catch (Exception $e) {
+				} catch (\Exception $e) {
 				    die('Cannot write to log path ' . $this->logPath);
 				}
 		    }
